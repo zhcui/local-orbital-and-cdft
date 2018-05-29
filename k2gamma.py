@@ -16,6 +16,7 @@ from pyscf.pbc.tools import pbc as tools_pbc
 from pyscf import scf, gto
 from pyscf.pbc import gto as pgto
 from pyscf.pbc import scf as pscf
+from pyscf.pbc import df
 
 
 def get_R_vec(mol, abs_kpts, kmesh):
@@ -85,7 +86,7 @@ def find_degenerate(mo_energy, mo_coeff, real_split = False, tol = 1e-5):
     return grouped mo_energy and its indices.    
     '''
 
-    real_tol = tol * 0.01
+    real_tol = tol * 0.01 # tol for split real
     
     res = []
     res_idx = []
@@ -139,7 +140,7 @@ def find_degenerate(mo_energy, mo_coeff, real_split = False, tol = 1e-5):
     return res, res_idx
 
 
-def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
+def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = True, tol_deg = 1e-5):
 
     '''
     convert the k-sampled mo coefficient to corresponding supercell gamma-point mo coefficient.
@@ -148,7 +149,7 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
          C_{\nu ' n'} = C_{\vecR\mu, \veck m} = \qty[ \frac{1}{\sqrt{N_{\UC}}} \e^{\ii \veck\cdot\vecR} C^{\veck}_{\mu  m}]
     '''
 
-    np.set_printoptions(4,linewidth=1000)
+    #np.set_printoptions(4,linewidth=1000)
 
     R_abs_mesh = get_R_vec(kmf.cell, abs_kpts, kmesh)    
     phase = np.exp(1j*np.einsum('Ru, ku -> Rk',R_abs_mesh, abs_kpts))
@@ -163,7 +164,7 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
     Nk, Nao, Nmo = C_k.shape
     NR = R_abs_mesh.shape[0]    
 
-    C_gamma = np.einsum('Rk, kMm -> RMkm', phase, C_k) / np.sqrt(NR)
+    C_gamma = np.einsum('Rk, kum -> Rukm', phase, C_k) / np.sqrt(NR)
     C_gamma = C_gamma.reshape((NR, Nao, Nk*Nmo))
 
     # sort energy of km
@@ -177,27 +178,29 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
     # make MO to be real
     if realize:
         
-        real_tol = tol_deg
+        real_tol = tol_deg # tolerance of residue of real or imag part
+        null_tol = tol_deg # tolerance of 0 for nullspace  
+
         print "Realize the gamma point MO ..." 
         C_gamma_real = np.zeros_like(C_gamma, dtype = np.double)
 
-        res, res_idx = find_degenerate(E_k_sort, C_gamma, real_split = True, tol = tol_deg )
+        res, res_idx = find_degenerate(E_k_sort, C_gamma, real_split = real_split, tol = tol_deg )
         print "Energy spectrum group:", res
         print "Energy idx:", res_idx
         col_idx = 0
         for i, gi_idx in enumerate(res_idx):
             gi = C_gamma[:,gi_idx]
-            null_coeff_real = nullspace(gi.real)
-            null_coeff_imag = nullspace(gi.imag)
+            null_coeff_real = nullspace(gi.real, atol = null_tol)
+            null_coeff_imag = nullspace(gi.imag, atol = null_tol)
 
             if null_coeff_real.shape[1] + null_coeff_imag.shape[1] != len(gi_idx):
-                print "realization error, not find enough linear combination coefficient"
+                print "Realization error, not find enough linear combination coefficient"
                 sys.exit(1)
 
             for j in xrange(null_coeff_real.shape[1]):
                 gi_after = gi.dot(null_coeff_real[:,j])
                 if la.norm(gi_after.real) > real_tol:
-                    print "realization error, real part is too large"
+                    print "Realization error, real part is too large"
                     sys.exit(1)
                 C_gamma_real[:,col_idx] = gi_after.imag
                 col_idx += 1
@@ -205,7 +208,7 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
             for j in xrange(null_coeff_imag.shape[1]): 
                 gi_after = gi.dot(null_coeff_imag[:,j]) 
                 if la.norm(gi_after.imag) > real_tol:
-                    print "realization error, imag part is too large"
+                    print "Realization error, imag part is too large"
                     sys.exit(1)
                 C_gamma_real[:,col_idx] = gi_after.real
                 col_idx += 1
@@ -217,18 +220,20 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 1e-5):
     sc.verbose = 0
     kmf_sc = pscf.KRHF(sc, [[0.0,0.0,0.0]]).density_fit() # TODO spin polarize ? DF or not?
     S_sc = kmf_sc.get_ovlp()[0]
-    # gamma MO not othogonal
+    # back to gamma MO not othogonal
     C_gamma = la.inv(la.sqrtm(S_sc)).dot(C_gamma)
 
     return C_gamma
 
             
 if __name__ == '__main__':
+    
+    np.set_printoptions(4,linewidth=1000)
 
     cell = pgto.Cell()
     cell.atom = '''
     H 0.  0.  0.
-    H 0.8 0.0 0.0
+    H 1.2 0.0 0.0
     '''
 
 #    cell.atom = '''
@@ -240,8 +245,9 @@ if __name__ == '__main__':
 #    '''
 
     cell.basis = 'sto3g'
-    cell.a = np.array([[2.0, 0.0, 0.0], [0.0, 20.0, 0.0],[0.0, 0.0, 20.0]])
-    cell.mesh = [51, 51, 51 ]
+    cell.a = np.array([[3.0, 0.0, 0.0], [0.0, 20.0, 0.0],[0.0, 0.0, 20.0]])
+    #cell.mesh = [51, 51, 51 ]
+    #cell.precision = 1e-10
     cell.verbose = 6
     #cell.chkfile = './chkfile'
     cell.unit='B'
@@ -251,31 +257,41 @@ if __name__ == '__main__':
     abs_kpts = cell.make_kpts(kmesh)
     scaled_kpts = cell.get_scaled_kpts(abs_kpts)
 
+
     kmf = pscf.KRHF(cell, abs_kpts).density_fit()
+    gdf = df.GDF(cell, abs_kpts)
+    kmf.with_df = gdf
     #kmf = pscf.KRHF(cell, abs_kpts)
     #kmf.__dict__.update(scf.chkfile.load('ch4.chk', 'scf')) # test
     ekpt = kmf.run()
 
-    c_g_ao = k2gamma(kmf, abs_kpts, kmesh)
-    print "gamma MO in supercell AO basis:"
+    #print kmf.mo_coeff[0]
+    #exit()
+    c_g_ao = k2gamma(kmf, abs_kpts, kmesh, tol_deg = 1e-5, real_split = True)
+    print "Supercell gamma MO in AO basis from conversion:"
     print c_g_ao
+
   
-    # check whether the MO is correctly coverted: 
+    # The following is to check whether the MO is correctly coverted: 
+
     sc = tools_pbc.super_cell(cell, kmesh)
     sc.verbose = 0
-    kmf_sc = pscf.KRHF(sc, [[0.0,0.0,0.0]]).density_fit()
+    kmf_sc = pscf.KRHF(sc, [[0.0, 0.0, 0.0]]).density_fit()
+    gdf = df.GDF(sc, [[0.0, 0.0, 0.0]])
+    kmf_sc.with_df = gdf
+
     #s = scf.hf.get_ovlp(sc) # NOTE what is the diff?
     s = kmf_sc.get_ovlp()[0]
     print "Run supercell gamma point calculation..." 
     ekpt_sc = kmf_sc.run()
     sc_mo = kmf_sc.mo_coeff[0]
-    print "supercell MO from calculation:"
+    print "Supercell gamma MO from direct calculation:"
     print sc_mo
 
     # lowdin of sc_mo and c_g_ao
     sc_mo_o = la.sqrtm(s).dot(sc_mo)
     c_g = la.sqrtm(s).dot(c_g_ao)
- 
+    
     # do some linear combination of degenerate states to make the converted MO looks like the direct calculated one
     u,sigma,v = la.svd(c_g[:, [1,2]].T.dot(sc_mo_o[:,[1,2]]))
     lc1 = c_g[:, [1,2]].dot(u[:, 0])
@@ -291,7 +307,7 @@ if __name__ == '__main__':
     c_g[:,3] = lc1
     c_g[:,4] = lc2     
 
-    print "converted gamma MO in AO basis, after some linear combination of degenerate state:"
+    print "Converted gamma MO in AO basis, after some linear combination of degenerate state, to make the converted MO looks like the direct calculated one"
     c_g_ao = la.inv(la.sqrtm(s)).dot(c_g)
     print c_g_ao
 
