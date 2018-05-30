@@ -139,7 +139,7 @@ def find_degenerate(mo_energy, mo_coeff, real_split = False, tol = 1e-5):
     return res, res_idx
 
 
-def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = True, tol_deg = 5e-5):
+def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = False, tol_deg = 5e-5):
 
     '''
     convert the k-sampled mo coefficient to corresponding supercell gamma-point mo coefficient.
@@ -245,7 +245,7 @@ if __name__ == '__main__':
     cell.unit='B'
     cell.build()
     
-    kmesh = [3, 1, 1]
+    kmesh = [1, 1, 1]
     abs_kpts = cell.make_kpts(kmesh)
     scaled_kpts = cell.get_scaled_kpts(abs_kpts)
 
