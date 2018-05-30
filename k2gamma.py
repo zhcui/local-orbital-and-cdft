@@ -245,7 +245,7 @@ if __name__ == '__main__':
     cell.unit='B'
     cell.build()
     
-    kmesh = [1, 1, 1]
+    kmesh = [3, 1, 1]
     abs_kpts = cell.make_kpts(kmesh)
     scaled_kpts = cell.get_scaled_kpts(abs_kpts)
 
