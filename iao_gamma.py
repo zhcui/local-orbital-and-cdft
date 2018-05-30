@@ -263,6 +263,24 @@ if __name__ == '__main__':
     print "Supercell gamma MO in AO basis from conversion:"
     print c_g_ao
 
+    '''
+    mo_coeff_occ = kmf_sc.mo_coeff[0][:,kmf_sc.mo_occ[0]>0]
+    lo_iao = lo.iao.iao(kmf_sc.cell, mo_coeff_occ)
+
+    # Orthogonalize IAO
+    lo_iao = lo.vec_lowdin(lo_iao, kmf_sc.get_ovlp()[0])
+
+    # transform mo_occ to IAO representation. Note the AO dimension is reduced
+    mo_coeff_occ = reduce(np.dot, (lo_iao.T, kmf_sc.get_ovlp()[0], mo_coeff_occ))
+
+    dm = np.dot(mo_coeff_occ, mo_coeff_occ.T) * 2
+    print dm.diagonal()
+    exit()
+    pmol = kmf.cell.copy()
+    pmol.build(False, False, basis='minao')
+    kmf_sc.mulliken_pop(pmol, dm, s=np.eye(pmol.nao_nr()))
+    '''
+
     # The following is to check whether the MO is correctly coverted: 
 
     sc = tools_pbc.super_cell(cell, kmesh)
