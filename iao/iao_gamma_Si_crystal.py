@@ -139,7 +139,7 @@ def find_degenerate(mo_energy, mo_coeff, real_split = False, tol = 1e-5):
     return res, res_idx
 
 
-def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = False, tol_deg = 5e-5):
+def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = True, tol_deg = 5e-5):
 
     '''
     convert the k-sampled mo coefficient to corresponding supercell gamma-point mo coefficient.
@@ -153,7 +153,9 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = False, tol_deg = 
 
     R_abs_mesh = get_R_vec(kmf.cell, abs_kpts, kmesh)    
     phase = np.exp(1j*np.einsum('Ru, ku -> Rk',R_abs_mesh, abs_kpts))
-    
+
+
+ 
     E_k = np.asarray(kmf.mo_energy)
     occ_k = np.asarray(kmf.mo_occ)
     C_k = np.asarray(kmf.mo_coeff)
@@ -170,8 +172,8 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = False, tol_deg = 
     E_k_sort = E_k_flat[E_k_sort_idx]
     occ_sort = occ_k.flatten()[E_k_sort_idx]
     
-    C_gamma = C_gamma[:, :, E_k_sort_idx]
     C_gamma = C_gamma.reshape((NR*Nao, Nk*Nmo))
+    C_gamma = C_gamma[:, E_k_sort_idx]
 
     # supercell object
     sc = tools_pbc.super_cell(cell, kmesh)
@@ -221,12 +223,12 @@ def k2gamma(kmf, abs_kpts, kmesh, realize = True, real_split = False, tol_deg = 
             
 if __name__ == '__main__':
     
-    np.set_printoptions(3,linewidth=1000)
+    np.set_printoptions(4,linewidth=1000)
 
     cell = pgto.Cell()
     cell.atom = '''
     H 0.  0.  0.
-    H 1.8 0.0 0.0
+    Li 3.0 0.0 0.0
     '''
 
 #    cell.atom = '''
@@ -238,72 +240,42 @@ if __name__ == '__main__':
 #    '''
 
     cell.basis = '321g'
-    cell.a = np.array([[3.6, 0.0, 0.0], [0.0, 20.0, 0.0],[0.0, 0.0, 20.0]])
+    cell.a = np.array([[6.00, 0.0, 0.0], [0.0, 20.0, 0.0],[0.0, 0.0, 20.0]])
     #cell.mesh = [21, 21, 21 ]
     cell.precision = 1e-10
     cell.verbose = 6
     cell.unit='B'
     cell.build()
     
-    kmesh = [2, 1, 1]
+    kmesh = [3, 1, 1]
     abs_kpts = cell.make_kpts(kmesh)
     scaled_kpts = cell.get_scaled_kpts(abs_kpts)
 
     kmf = pscf.KRHF(cell, abs_kpts).density_fit()
     gdf = df.GDF(cell, abs_kpts)
     kmf.with_df = gdf
-    #kmf.checkfile = './ch4.chk'
+    kmf.checkfile = './ch4.chk'
     kmf.verbose = 5
     #kmf = pscf.KRHF(cell, abs_kpts)
     #kmf.__dict__.update(scf.chkfile.load('ch4.chk', 'scf')) # test
     ekpt = kmf.run()
 
-    print np.asarray(kmf.mo_coeff)
-
-    kmf_sc = k2gamma(kmf, abs_kpts, kmesh, realize = True, tol_deg = 5e-5, real_split = False)
+    kmf_sc = k2gamma(kmf, abs_kpts, kmesh, realize = False, tol_deg = 5e-5, real_split = False)
     c_g_ao = kmf_sc.mo_coeff[0] 
     print "Supercell gamma MO in AO basis from conversion:"
     print c_g_ao
+    
+    mo_coeff_occ = kmf_sc.mo_coeff[0][:,kmf_sc.mo_occ[0]>0]
+    lo_iao = lo.iao.iao(kmf_sc.cell, mo_coeff_occ)
 
-    dm_convert = 2.0 * c_g_ao[:, kmf_sc.mo_occ[0]>0].dot(c_g_ao[:, kmf_sc.mo_occ[0]>0].conj().T)
+    # Orthogonalize IAO
+    lo_iao = lo.vec_lowdin(lo_iao, kmf_sc.get_ovlp()[0])
 
+    # transform mo_occ to IAO representation. Note the AO dimension is reduced
+    mo_coeff_occ = reduce(np.dot, (lo_iao.conj().T, kmf_sc.get_ovlp()[0], mo_coeff_occ))
 
-    # The following is to check whether the MO is correctly coverted: 
-
-    sc = tools_pbc.super_cell(cell, kmesh)
-    #sc.verbose = 0
-
-
-    kmf_sc2 = pscf.KRHF(sc, [[0.0, 0.0, 0.0]]).density_fit()
-    gdf = df.GDF(sc, [[0.0, 0.0, 0.0]])
-    kmf_sc2.with_df = gdf
-    s = kmf_sc2.get_ovlp()[0]
-
-    print "Run supercell gamma point calculation..." 
-    ekpt_sc = kmf_sc2.run([dm_convert])
-    #ekpt_sc = kmf_sc2.run()
-    sc_mo = kmf_sc2.mo_coeff[0]
-    print "Supercell gamma MO from direct calculation:"
-    print sc_mo
-
-    # lowdin of sc_mo and c_g_ao
-    sc_mo_o = la.sqrtm(s).dot(sc_mo)
-    c_g = la.sqrtm(s).dot(c_g_ao)
-
-    res, res_idx = find_degenerate(kmf_sc.mo_energy[0], c_g, real_split = False, tol = 5e-5)
-
-    print res
-    print kmf_sc2.mo_energy
-    print c_g_ao.conj().T.dot(s).dot(c_g_ao)
-    exit()
-
-    for i in xrange(len(res_idx)): 
-        print 
-        print "subspace:", i
-        print "index:", res_idx[i]
-        print "energy:", res[i]
-        #print sc_mo.conj().T.dot(s.dot(sc_mo)).real
-        u, sigma, v = la.svd(c_g[:,res_idx[i]].T.conj().dot(sc_mo_o[:,res_idx[i]]))
-        print "singular value of subspace (C_convert * C_calculated):" , sigma
-        
-
+    dm = np.dot(mo_coeff_occ, mo_coeff_occ.conj().T) * 2
+    
+    pmol = kmf_sc.cell.copy()
+    pmol.build(False, False, basis='minao')
+    kmf_sc.mulliken_pop(pmol, dm, s=np.eye(pmol.nao_nr()))
